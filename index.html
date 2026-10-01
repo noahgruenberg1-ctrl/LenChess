@@ -152,7 +152,7 @@ body.wide .panel{max-height:none;flex:1}
 #chatForm .in{padding:9px 10px}
 
 /* Editor */
-.pal{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;max-width:var(--es);margin:0 auto 8px}
+.pal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;max-width:var(--es);margin:0 auto 8px}
 .pal button{position:relative;aspect-ratio:1;background:#3c3a37;border:2px solid transparent;border-radius:6px}
 .pal button.on{border-color:var(--g);background:#4b4845}
 .row3{display:flex;gap:6px;max-width:var(--es);margin:0 auto 14px}
@@ -280,7 +280,7 @@ body.wide .panel{max-height:none;flex:1}
   <div class="card"><label class="f">Am Zug</label><div class="seg" id="edTurn"><button data-v="w" class="on">Weiß</button><button data-v="b">Schwarz</button></div></div>
   <div class="err" id="edErr"></div>
   <button class="btn" data-a="edOk">Übernehmen</button>
-  <small class="hint">Figur in der Leiste wählen, dann aufs Feld tippen. Nochmal tippen entfernt sie. Rochade ist möglich, wenn König und Turm auf ihren Ausgangsfeldern stehen.</small>
+  <small class="hint">Figur in der Leiste wählen, dann aufs Feld tippen. Nochmal tippen entfernt sie. Rochade ist möglich, wenn König und Turm auf ihren Ausgangsfeldern stehen.<br><br>💣 <b>Bombe:</b> bleibt auf ihrem Feld stehen. Ihr Besitzer kann sie statt eines Zugs antippen und zünden – alles im 3×3-Feld um sie herum wird zerstört, Könige sind immun. Der Gegner kann sie normal schlagen.</small>
 </section>
 
 <!-- GAME -->
@@ -340,7 +340,7 @@ const N_OFF=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
 const K_OFF=[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
 const B_DIR=[[-1,-1],[-1,1],[1,-1],[1,1]];
 const R_DIR=[[-1,0],[1,0],[0,-1],[0,1]];
-const VAL={p:1,n:3,b:3,r:5,q:9,k:0};
+const VAL={p:1,n:3,b:3,r:5,q:9,k:0,x:0};
 const DE={n:'S',b:'L',r:'T',q:'D',k:'K'};
 const opp=c=>c==='w'?'b':'w';
 const colorOf=p=>p?(p===p.toUpperCase()?'w':'b'):null;
@@ -397,6 +397,11 @@ function pseudo(pos){
   for(let sq=0;sq<64;sq++){
     const p=b[sq]; if(!p||colorOf(p)!==turn) continue;
     const t=p.toLowerCase(),r=sq>>3,f=sq&7;
+    if(t==='x'){
+      const destroyed=blastArea(sq).filter(s=>s!==sq).map(s=>b[s]).filter(q=>q&&q.toLowerCase()!=='k');
+      moves.push({det:true,from:sq,to:sq,piece:p,captured:null,destroyed});
+      continue;
+    }
     if(t==='p'){
       const add=(to,cap)=>{
         if((to>>3)===promoRow){for(const pr of 'qrbn') moves.push({from:sq,to,piece:p,captured:cap,promo:pr});}
@@ -448,11 +453,11 @@ function pseudo(pos){
   return moves;
 }
 function makeMove(pos,m){
-  if(m.bomb){
+  if(m.bomb||m.det){
     const b=pos.board.slice();
     for(const s of blastArea(m.to)) if(b[s]&&b[s].toLowerCase()!=='k') b[s]=null;
     return {board:b,turn:opp(pos.turn),castle:fixCastle(b,pos.castle),ep:-1,half:0,
-      full:pos.turn==='b'?pos.full+1:pos.full,bombs:{...pos.bombs,[pos.turn]:false}};
+      full:pos.turn==='b'?pos.full+1:pos.full,bombs:m.bomb?{...pos.bombs,[pos.turn]:false}:pos.bombs};
   }
   const b=pos.board.slice();
   b[m.to]=m.promo?(pos.turn==='w'?m.promo.toUpperCase():m.promo):m.piece;
@@ -485,10 +490,11 @@ function genLegal(pos){
   pos._l=out;
   return out;
 }
-const uciOf=m=>m.bomb?'@'+sqName(m.to):sqName(m.from)+sqName(m.to)+(m.promo||'');
+const uciOf=m=>m.det?'*'+sqName(m.to):m.bomb?'@'+sqName(m.to):sqName(m.from)+sqName(m.to)+(m.promo||'');
 function san(pos,m,list){
   let s;
-  if(m.bomb) s='💣'+sqName(m.to);
+  if(m.det) s='💥'+sqName(m.to);
+  else if(m.bomb) s='💣'+sqName(m.to);
   else if(m.castle) s=m.castle==='K'?'O-O':'O-O-O';
   else {
     const t=m.piece.toLowerCase();
@@ -519,7 +525,7 @@ function posKey(pos){
   return pos.board.map(x=>x||'.').join('')+pos.turn+c+pos.ep+bm;
 }
 function insufficient(b){
-  const pcs=b.filter(p=>p&&p.toLowerCase()!=='k');
+  const pcs=b.filter(p=>p&&!/[kxKX]/.test(p));
   if(!pcs.length) return true;
   if(pcs.length===1&&/[nbNB]/.test(pcs[0])) return true;
   if(pcs.every(p=>p.toLowerCase()==='b')){
@@ -530,7 +536,7 @@ function insufficient(b){
   return false;
 }
 function canMate(b,c){
-  const pcs=b.filter(p=>p&&colorOf(p)===c&&p.toLowerCase()!=='k');
+  const pcs=b.filter(p=>p&&colorOf(p)===c&&!/[kxKX]/.test(p));
   if(!pcs.length) return false;
   if(pcs.length===1&&/[nbNB]/.test(pcs[0])) return false;
   return true;
@@ -559,6 +565,9 @@ function injectPieces(){
   for(const p of 'KQRBNPkqrbnp') css+=`.${pieceClass(p)}{background-image:url("data:image/svg+xml,${encodeURIComponent(pieceSVG(p))}")}`;
   const bomb='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M64 26Q70 10 84 13" fill="none" stroke="#a07a45" stroke-width="5" stroke-linecap="round"/><rect x="50" y="22" width="20" height="16" rx="3" transform="rotate(35 60 30)" fill="#6a6764" stroke="#1d1c1a" stroke-width="3.5"/><circle cx="45" cy="60" r="30" fill="#3a3836" stroke="#1d1c1a" stroke-width="3.5"/><circle cx="34" cy="49" r="7" fill="#fff" opacity=".3"/><circle cx="86" cy="12" r="8" fill="#ffb428"/><circle cx="86" cy="12" r="4" fill="#fff3b0"/></svg>';
   css+=`.p-bomb{background-image:url("data:image/svg+xml,${encodeURIComponent(bomb)}")}`;
+  const bombPiece=(body,st,shine)=>`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M62 30Q68 14 82 17" fill="none" stroke="#a07a45" stroke-width="5" stroke-linecap="round"/><rect x="48" y="26" width="20" height="16" rx="3" transform="rotate(35 58 34)" fill="${body}" stroke="${st}" stroke-width="3.5"/><circle cx="45" cy="62" r="28" fill="${body}" stroke="${st}" stroke-width="3.5"/><circle cx="35" cy="52" r="7" fill="${shine}" opacity=".45"/><circle cx="84" cy="16" r="7" fill="#ffb428"/><circle cx="84" cy="16" r="3.5" fill="#fff3b0"/></svg>`;
+  css+=`.p-wx{background-image:url("data:image/svg+xml,${encodeURIComponent(bombPiece('#f9f9f9','#3b3936','#ffffff'))}")}`;
+  css+=`.p-bx{background-image:url("data:image/svg+xml,${encodeURIComponent(bombPiece('#565352','#1d1c1a','#ffffff'))}")}`;
   const st=document.createElement('style'); st.textContent=css; document.head.appendChild(st);
 }
 
@@ -656,7 +665,7 @@ let ui;
 function freshRound(){
   return {sel:null,targets:new Map(),viewPly:null,lock:null,pending:null,drawIn:false,drawOut:false,
     tbIn:false,tbOut:false,rmIn:false,rmOut:false,resultShown:false,
-    pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,boom:null,
+    pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,det:null,boom:null,
     an:{running:false,progress:0,error:null}};
 }
 function resetUI(){
@@ -664,7 +673,7 @@ function resetUI(){
 }
 function resetRound(){Object.assign(ui,freshRound()); if(ui.tab==='an') ui.tab='moves';}
 function clearTransient(){
-  Object.assign(ui,{sel:null,targets:new Map(),lock:null,pending:null,pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null});
+  Object.assign(ui,{sel:null,targets:new Map(),lock:null,pending:null,pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,det:null});
 }
 resetUI();
 
@@ -705,13 +714,14 @@ function applyMove(u,moverClock){
   clearTransient();
   Object.assign(ui,{drawIn:false,drawOut:false,viewPly:null});
   const m=D.moveObjs[D.moveObjs.length-1];
-  if(m.bomb){
+  if(m.bomb||m.det){
     ui.boom={area:blastArea(m.to),until:Date.now()+800};
     setTimeout(()=>{if(game) renderGame();},850);
   }
   checkEnd();
-  if(!game.result) sfx(m.bomb?'boom':inCheck(curPos())?'check':m.captured?'capture':'move');
-  else if(m.bomb) sfx('boom');
+  const blast=m.bomb||m.det;
+  if(!game.result) sfx(blast?'boom':inCheck(curPos())?'check':m.captured?'capture':'move');
+  else if(blast) sfx('boom');
   saveHost();
   renderGame();
   if(!game.result&&curPos().turn===myColor){
@@ -851,7 +861,7 @@ function startAnalysis(){
       saveHost(); renderGame(); return;
     }
     score=null; mate=null;
-    sf.postMessage('position fen '+toFEN(positions[i]));
+    sf.postMessage('position fen '+toFEN(Object.assign({},positions[i],{board:positions[i].board.map(q=>q&&/[xX]/.test(q)?null:q)})));
     sf.postMessage('go depth '+AN_DEPTH);
     cap=setTimeout(()=>{if(id===anId&&sf) sf.postMessage('stop');},AN_CAP);
     const gi=i;
@@ -972,13 +982,34 @@ let peer=null,conn=null,connected=false,lastSeen=0,attempt=null,attemptAt=0,netT
 function send(o){if(conn&&conn.open){try{conn.send(o);}catch(e){}}}
 function killPeer(){
   clearInterval(netTimer); netTimer=null;
-  const p=peer; peer=null; conn=null; attempt=null; connected=false;
+  startSeq++; const p=peer; peer=null; conn=null; attempt=null; connected=false;
   try{p&&p.destroy();}catch(e){}
 }
 function peerOk(){if(typeof Peer==='undefined'){toast('Netzwerk-Bibliothek konnte nicht geladen werden'); return false;} return true;}
-function hostStart(){
+/* Relay-Server (TURN), damit es auch über Mobilfunk/Hotspots klappt */
+const TURN_HOST='staticauth.openrelay.metered.ca',TURN_SECRET='openrelayprojectsecret';
+async function iceServers(){
+  const list=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:'+TURN_HOST+':80'}];
+  try{
+    const user=Math.floor(Date.now()/1000+24*3600)+':schach';
+    const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(TURN_SECRET),{name:'HMAC',hash:'SHA-1'},false,['sign']);
+    const sig=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(user));
+    const credential=btoa(String.fromCharCode(...new Uint8Array(sig)));
+    list.push({urls:[`turn:${TURN_HOST}:80`,`turn:${TURN_HOST}:80?transport=tcp`,`turn:${TURN_HOST}:443`,`turn:${TURN_HOST}:443?transport=tcp`],username:user,credential});
+  }catch(e){}
+  return list;
+}
+let startSeq=0;
+async function peerOpts(){
+  const seq=++startSeq;
+  const ice=await iceServers();
+  return seq===startSeq?{debug:0,config:{iceServers:ice}}:null;
+}
+async function hostStart(){
   killPeer(); if(!peerOk()) return;
-  const p=new Peer(PFX+roomCode,{debug:0}); peer=p;
+  const code=roomCode,opts=await peerOpts();
+  if(!opts||role!=='host'||roomCode!==code||peer) return;
+  const p=new Peer(PFX+roomCode,opts); peer=p;
   p.on('open',()=>{if(p===peer) renderAll();});
   p.on('connection',c=>{
     c.on('data',d=>{if(p!==peer) return; lastSeen=Date.now(); if(d&&d.t==='hello') onHello(c,d); else if(c===conn) handleMsg(d);});
@@ -1003,9 +1034,11 @@ function onHello(c,d){
   if(!game.started){game.started=true; game.turnStart=Date.now(); sfx('notify'); toast('Gegner ist beigetreten');}
   saveHost(); sendSync(); renderGame();
 }
-function guestStart(){
+async function guestStart(){
   killPeer(); if(!peerOk()) return;
-  const p=new Peer({debug:0}); peer=p;
+  const code=roomCode,opts=await peerOpts();
+  if(!opts||role!=='guest'||roomCode!==code||peer) return;
+  const p=new Peer(opts); peer=p;
   p.on('open',()=>{if(p===peer) connectToHost();});
   p.on('error',err=>{if(p!==peer) return; if(err.type==='peer-unavailable') attempt=null;});
   netTimer=setInterval(netWatch,3000);
@@ -1071,7 +1104,7 @@ function handleMsg(d){
   switch(d.t){
     case 'move':
       if(d.ply!==game.moves.length||!applyMove(d.u,d.clk)) resync();
-      else if(local.vibrate&&navigator.vibrate) navigator.vibrate(String(d.u)[0]==='@'?[60,40,200]:35);
+      else if(local.vibrate&&navigator.vibrate) navigator.vibrate('@*'.includes(String(d.u)[0])?[60,40,200]:35);
       break;
     case 'chat':
       game.chat.push(d.m); if(game.chat.length>200) game.chat.shift();
@@ -1094,7 +1127,7 @@ function handleMsg(d){
 /* ---------- Rendering ---------- */
 function renderBoard(grid,pos,o){
   const b=pos.board,lf=o.last?o.last.from:-1,lt=o.last?o.last.to:-1;
-  const lastArea=o.last&&o.last.bomb?new Set(blastArea(o.last.to)):null;
+  const lastArea=o.last&&(o.last.bomb||o.last.det)?new Set(blastArea(o.last.to)):null;
   const bp=o.bombPreview!=null?new Set(blastArea(o.bombPreview)):null;
   const boom=o.boom?new Set(o.boom):null;
   const pf=o.pre?o.pre.from:-1,pt=o.pre?o.pre.to:-1;
@@ -1143,7 +1176,7 @@ function renderGame(){
   const boom=ui.boom&&Date.now()<ui.boom.until&&live?ui.boom.area:null;
   renderBoard($('#grid'),pos,{flipped:ui.flipped,last:hide?null:last,sel,targets,check:chk,
     hidePieces:hide||blindNow(),coords:local.coords,pre:live&&!hide?ui.pre:null,
-    bombPreview:ui.bombMode&&ui.bombTarget!==null?ui.bombTarget:null,boom});
+    bombPreview:ui.bombMode&&ui.bombTarget!==null?ui.bombTarget:(live&&ui.det!==null?ui.det:null),boom});
   $('#hideOv').classList.toggle('hidden',!hide);
   const waiting=role==='host'&&!game.started;
   $('#waitOv').classList.toggle('hidden',!waiting);
@@ -1167,7 +1200,7 @@ function renderBars(){
   const top=ui.flipped?'w':'b',bot=opp(top); ui.topColor=top;
   const caps={w:[],b:[]};
   for(const m of D.moveObjs){
-    if(m.bomb){for(const p of m.destroyed) caps[opp(colorOf(p))].push(p);}
+    if(m.bomb||m.det){for(const p of m.destroyed) caps[opp(colorOf(p))].push(p);}
     else if(m.captured) caps[colorOf(m.piece)].push(m.captured);
   }
   let mat=0;
@@ -1332,6 +1365,7 @@ function renderBanner(){
   else if(ui.bombMode&&!game.result) h=ui.bombTarget!==null
     ?`<span class="bt">💣 Bombe auf ${sqName(ui.bombTarget)} zünden?</span><button class="sbtn red" data-a="bombGo">Zünden</button><button class="sbtn gh" data-a="bombNo">Abbrechen</button>`
     :`<span class="bt">💣 Tippe auf ein Feld für die Bombe</span><button class="sbtn gh" data-a="bombNo">Abbrechen</button>`;
+  else if(ui.det!==null&&!game.result) h=`<span class="bt">💣 Bombe auf ${sqName(ui.det)} zünden?</span><button class="sbtn red" data-a="detGo">Zünden</button><button class="sbtn gh" data-a="detNo">Abbrechen</button>`;
   else if(ui.drawIn&&!game.result) h=`<span class="bt">${on} bietet Remis an</span><button class="sbtn" data-a="drawYes">Annehmen</button><button class="sbtn gh" data-a="drawNo">Ablehnen</button>`;
   else if(ui.tbIn&&!game.result) h=`<span class="bt">${on} möchte einen Zug zurücknehmen</span><button class="sbtn" data-a="tbYes">Annehmen</button><button class="sbtn gh" data-a="tbNo">Ablehnen</button>`;
   else if(game.result) h=`<span class="bt">${resultTitle()} · ${esc(game.result.r)}</span>${rematchBtn('sbtn')}<button class="sbtn gh" data-a="showAn">Analyse</button><button class="sbtn gh" data-a="home">Startseite</button>`;
@@ -1426,6 +1460,7 @@ function select(sq){
 }
 function premoveTargets(pos,sq){
   const b=pos.board,p=b[sq],c=colorOf(p),t=p.toLowerCase(),r=sq>>3,f=sq&7,s=new Set();
+  if(t==='x') return s;
   const add=(rr,ff)=>{if(inB(rr,ff)){const to=rr*8+ff; if(colorOf(b[to])!==c) s.add(to);}};
   if(t==='p'){
     const up=c==='w'?-1:1;
@@ -1457,6 +1492,12 @@ function onDown(e){
     e.preventDefault();
     if(ui.sel!==null&&ui.targets.has(sq)){tryMove(sq); return;}
     const p=curPos().board[sq];
+    if(p&&colorOf(p)===myColor&&p.toLowerCase()==='x'){
+      if(ui.lock!==null&&ui.lock!==sq) return;
+      if(!genLegal(curPos()).some(m=>m.det&&m.from===sq)){toast('Geht nicht – dein König stünde danach im Schach'); return;}
+      ui.sel=null; ui.targets=new Map(); ui.det=ui.det===sq?null:sq; renderGame(); return;
+    }
+    if(ui.det!==null){ui.det=null; renderGame();}
     if(p&&colorOf(p)===myColor){
       if(ui.lock!==null&&ui.lock!==sq) return;
       const was=ui.sel===sq;
@@ -1620,8 +1661,14 @@ async function act(a){
       if(!game||!game.settings.bomb||!curPos().bombs[myColor]) return;
       if(!canPlay()&&!ui.bombMode){toast(game.result?'Die Partie ist vorbei':'Du bist nicht am Zug'); return;}
       if(ui.lock!==null){toast('Berührt – geführt: du musst die angetippte Figur ziehen'); return;}
-      ui.bombMode=!ui.bombMode; ui.bombTarget=null; ui.sel=null; ui.targets=new Map(); renderGame(); break;
+      ui.bombMode=!ui.bombMode; ui.bombTarget=null; ui.det=null; ui.sel=null; ui.targets=new Map(); renderGame(); break;
     case 'bombNo': ui.bombMode=false; ui.bombTarget=null; renderGame(); break;
+    case 'detNo': ui.det=null; renderGame(); break;
+    case 'detGo': {
+      const sq=ui.det; ui.det=null;
+      if(sq!==null&&canPlay()) commitMove('*'+sqName(sq)); else renderGame();
+      break;
+    }
     case 'bombGo': {
       const sq=ui.bombTarget; ui.bombMode=false; ui.bombTarget=null;
       if(sq!==null&&canPlay()) commitMove('@'+sqName(sq)); else renderGame();
@@ -1688,7 +1735,7 @@ window.addEventListener('orientationchange',()=>setTimeout(layout,200));
 
 /* ---------- Start ---------- */
 injectPieces();
-$('#pal').innerHTML='KQRBNPkqrbnp'.split('').map(p=>`<button data-pc="${p}"><span class="pc ${pieceClass(p)}"></span></button>`).join('');
+$('#pal').innerHTML='KQRBNPXkqrbnpx'.split('').map(p=>`<button data-pc="${p}"><span class="pc ${pieceClass(p)}"></span></button>`).join('');
 layout();
 setInterval(tick,100);
 (function init(){
