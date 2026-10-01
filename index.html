@@ -280,7 +280,7 @@ body.wide .panel{max-height:none;flex:1}
   <div class="card"><label class="f">Am Zug</label><div class="seg" id="edTurn"><button data-v="w" class="on">Weiß</button><button data-v="b">Schwarz</button></div></div>
   <div class="err" id="edErr"></div>
   <button class="btn" data-a="edOk">Übernehmen</button>
-  <small class="hint">Figur in der Leiste wählen, dann aufs Feld tippen. Nochmal tippen entfernt sie. Rochade ist möglich, wenn König und Turm auf ihren Ausgangsfeldern stehen.<br><br>💣 <b>Bombe:</b> bleibt auf ihrem Feld stehen. Ihr Besitzer kann sie statt eines Zugs antippen und zünden – alles im 3×3-Feld um sie herum wird zerstört, Könige sind immun. Der Gegner kann sie normal schlagen.</small>
+  <small class="hint">Figur in der Leiste wählen, dann aufs Feld tippen. Nochmal tippen entfernt sie. Rochade ist möglich, wenn König und Turm auf ihren Ausgangsfeldern stehen.<br><br>💣 <b>Bombe:</b> wartet auf ihrem Feld. Ihr Besitzer kann sie statt eines Zugs auf ein beliebiges Feld ziehen – dort explodiert sie und zerstört alles im 3×3-Feld, Könige sind immun. Der Gegner kann sie normal schlagen.</small>
 </section>
 
 <!-- GAME -->
@@ -398,8 +398,10 @@ function pseudo(pos){
     const p=b[sq]; if(!p||colorOf(p)!==turn) continue;
     const t=p.toLowerCase(),r=sq>>3,f=sq&7;
     if(t==='x'){
-      const destroyed=blastArea(sq).filter(s=>s!==sq).map(s=>b[s]).filter(q=>q&&q.toLowerCase()!=='k');
-      moves.push({det:true,from:sq,to:sq,piece:p,captured:null,destroyed});
+      for(let to=0;to<64;to++){
+        const destroyed=blastArea(to).filter(s=>s!==sq).map(s=>b[s]).filter(q=>q&&q.toLowerCase()!=='k');
+        moves.push({det:true,from:sq,to,piece:p,captured:null,destroyed});
+      }
       continue;
     }
     if(t==='p'){
@@ -455,6 +457,7 @@ function pseudo(pos){
 function makeMove(pos,m){
   if(m.bomb||m.det){
     const b=pos.board.slice();
+    if(m.det) b[m.from]=null;
     for(const s of blastArea(m.to)) if(b[s]&&b[s].toLowerCase()!=='k') b[s]=null;
     return {board:b,turn:opp(pos.turn),castle:fixCastle(b,pos.castle),ep:-1,half:0,
       full:pos.turn==='b'?pos.full+1:pos.full,bombs:m.bomb?{...pos.bombs,[pos.turn]:false}:pos.bombs};
@@ -490,10 +493,10 @@ function genLegal(pos){
   pos._l=out;
   return out;
 }
-const uciOf=m=>m.det?'*'+sqName(m.to):m.bomb?'@'+sqName(m.to):sqName(m.from)+sqName(m.to)+(m.promo||'');
+const uciOf=m=>m.det?'*'+sqName(m.from)+sqName(m.to):m.bomb?'@'+sqName(m.to):sqName(m.from)+sqName(m.to)+(m.promo||'');
 function san(pos,m,list){
   let s;
-  if(m.det) s='💥'+sqName(m.to);
+  if(m.det) s='💥'+(pos.board.filter(q=>q===m.piece).length>1?sqName(m.from)+'→':'')+sqName(m.to);
   else if(m.bomb) s='💣'+sqName(m.to);
   else if(m.castle) s=m.castle==='K'?'O-O':'O-O-O';
   else {
@@ -665,7 +668,7 @@ let ui;
 function freshRound(){
   return {sel:null,targets:new Map(),viewPly:null,lock:null,pending:null,drawIn:false,drawOut:false,
     tbIn:false,tbOut:false,rmIn:false,rmOut:false,resultShown:false,
-    pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,det:null,boom:null,
+    pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,detFrom:null,detTo:null,boom:null,
     an:{running:false,progress:0,error:null}};
 }
 function resetUI(){
@@ -673,7 +676,7 @@ function resetUI(){
 }
 function resetRound(){Object.assign(ui,freshRound()); if(ui.tab==='an') ui.tab='moves';}
 function clearTransient(){
-  Object.assign(ui,{sel:null,targets:new Map(),lock:null,pending:null,pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,det:null});
+  Object.assign(ui,{sel:null,targets:new Map(),lock:null,pending:null,pre:null,preSel:null,preTargets:new Set(),bombMode:false,bombTarget:null,detFrom:null,detTo:null});
 }
 resetUI();
 
@@ -988,8 +991,19 @@ function killPeer(){
 function peerOk(){if(typeof Peer==='undefined'){toast('Netzwerk-Bibliothek konnte nicht geladen werden'); return false;} return true;}
 /* Relay-Server (TURN), damit es auch über Mobilfunk/Hotspots klappt */
 const TURN_HOST='staticauth.openrelay.metered.ca',TURN_SECRET='openrelayprojectsecret';
+// Optional: eigener kostenloser Metered-Account (schneller). App-Name und API-Key hier eintragen.
+const METERED_APP='',METERED_KEY='';
 async function iceServers(){
   const list=[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:'+TURN_HOST+':80'}];
+  if(METERED_APP&&METERED_KEY){
+    try{
+      const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),4000);
+      const r=await fetch(`https://${METERED_APP}.metered.live/api/v1/turn/credentials?apiKey=${METERED_KEY}`,{signal:ctl.signal});
+      clearTimeout(t);
+      const arr=await r.json();
+      if(Array.isArray(arr)&&arr.length) return arr;
+    }catch(e){}
+  }
   try{
     const user=Math.floor(Date.now()/1000+24*3600)+':schach';
     const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(TURN_SECRET),{name:'HMAC',hash:'SHA-1'},false,['sign']);
@@ -1060,7 +1074,7 @@ function connectToHost(){
 function netWatch(){
   if(!peer) return;
   if(peer.disconnected&&!peer.destroyed){try{peer.reconnect();}catch(e){}}
-  if(connected&&Date.now()-lastSeen>12000){const c=conn; conn=null; connected=false; try{c&&c.close();}catch(e){} renderAll();}
+  if(connected&&Date.now()-lastSeen>20000){const c=conn; conn=null; connected=false; try{c&&c.close();}catch(e){} renderAll();}
   if(connected) send({t:'ping'});
   if(role==='guest'&&!connected&&!ui.full&&peer.open){
     if(!attempt||Date.now()-attemptAt>8000){try{attempt&&attempt.close();}catch(e){} attempt=null; connectToHost();}
@@ -1080,8 +1094,10 @@ function loadState(s,note){
   if(keepAn&&keepAn.n===game.moves.length) game.analysis=keepAn;
   myColor=opp(s.hostColor);
   if(colorChanged) ui.flipped=myColor==='b';
+  const keepPre=note?null:ui.pre;
   rebuild();
   clearTransient();
+  if(keepPre&&!game.result&&curPos().turn!==myColor) ui.pre=keepPre;
   ui.viewPly=null;
   if(game.analysis&&ui.an.running) cancelAnalysis();
   if(note==='rematch'){resetRound(); closeModal(); toast('Neue Partie – du spielst '+colName(myColor)); sfx('notify');}
@@ -1171,12 +1187,12 @@ function renderGame(){
   const hide=hiddenNow();
   const chk=!hide&&inCheck(pos)?kingSq(pos.board,pos.turn):-1;
   const showSel=live&&!ui.pending&&!hide;
-  const sel=showSel?(ui.sel!==null?ui.sel:ui.preSel):null;
+  const sel=showSel?(ui.sel!==null?ui.sel:ui.detFrom!==null?ui.detFrom:ui.preSel):null;
   const targets=showSel&&game.settings.hints?(ui.sel!==null?ui.targets:(ui.preSel!==null?ui.preTargets:null)):null;
   const boom=ui.boom&&Date.now()<ui.boom.until&&live?ui.boom.area:null;
   renderBoard($('#grid'),pos,{flipped:ui.flipped,last:hide?null:last,sel,targets,check:chk,
     hidePieces:hide||blindNow(),coords:local.coords,pre:live&&!hide?ui.pre:null,
-    bombPreview:ui.bombMode&&ui.bombTarget!==null?ui.bombTarget:(live&&ui.det!==null?ui.det:null),boom});
+    bombPreview:ui.bombMode&&ui.bombTarget!==null?ui.bombTarget:(live&&ui.detTo!==null?ui.detTo:null),boom});
   $('#hideOv').classList.toggle('hidden',!hide);
   const waiting=role==='host'&&!game.started;
   $('#waitOv').classList.toggle('hidden',!waiting);
@@ -1365,7 +1381,9 @@ function renderBanner(){
   else if(ui.bombMode&&!game.result) h=ui.bombTarget!==null
     ?`<span class="bt">💣 Bombe auf ${sqName(ui.bombTarget)} zünden?</span><button class="sbtn red" data-a="bombGo">Zünden</button><button class="sbtn gh" data-a="bombNo">Abbrechen</button>`
     :`<span class="bt">💣 Tippe auf ein Feld für die Bombe</span><button class="sbtn gh" data-a="bombNo">Abbrechen</button>`;
-  else if(ui.det!==null&&!game.result) h=`<span class="bt">💣 Bombe auf ${sqName(ui.det)} zünden?</span><button class="sbtn red" data-a="detGo">Zünden</button><button class="sbtn gh" data-a="detNo">Abbrechen</button>`;
+  else if(ui.detFrom!==null&&!game.result) h=ui.detTo!==null
+    ?`<span class="bt">💣 Bombe auf ${sqName(ui.detTo)} zünden?</span><button class="sbtn red" data-a="detGo">Zünden</button><button class="sbtn gh" data-a="detNo">Abbrechen</button>`
+    :`<span class="bt">💣 Ziehe die Bombe auf ein Feld oder tippe das Zielfeld an</span><button class="sbtn gh" data-a="detNo">Abbrechen</button>`;
   else if(ui.drawIn&&!game.result) h=`<span class="bt">${on} bietet Remis an</span><button class="sbtn" data-a="drawYes">Annehmen</button><button class="sbtn gh" data-a="drawNo">Ablehnen</button>`;
   else if(ui.tbIn&&!game.result) h=`<span class="bt">${on} möchte einen Zug zurücknehmen</span><button class="sbtn" data-a="tbYes">Annehmen</button><button class="sbtn gh" data-a="tbNo">Ablehnen</button>`;
   else if(game.result) h=`<span class="bt">${resultTitle()} · ${esc(game.result.r)}</span>${rematchBtn('sbtn')}<button class="sbtn gh" data-a="showAn">Analyse</button><button class="sbtn gh" data-a="home">Startseite</button>`;
@@ -1476,6 +1494,10 @@ function premoveTargets(pos,sq){
   }
   return s;
 }
+function setDetTarget(to){
+  if(!genLegal(curPos()).some(m=>m.det&&m.from===ui.detFrom&&m.to===to)){toast('Geht nicht – dein König stünde danach im Schach'); return;}
+  ui.detTo=to; renderGame();
+}
 function setPre(from,to){ui.pre={from,to}; ui.preSel=null; ui.preTargets=new Set(); renderGame();}
 function clearPre(){ui.pre=null; ui.preSel=null; ui.preTargets=new Set();}
 function onDown(e){
@@ -1492,12 +1514,19 @@ function onDown(e){
     e.preventDefault();
     if(ui.sel!==null&&ui.targets.has(sq)){tryMove(sq); return;}
     const p=curPos().board[sq];
-    if(p&&colorOf(p)===myColor&&p.toLowerCase()==='x'){
+    if(p&&colorOf(p)===myColor&&p.toLowerCase()==='x'&&!(ui.detFrom!==null&&ui.detFrom!==sq&&ui.lock===ui.detFrom)){
       if(ui.lock!==null&&ui.lock!==sq) return;
-      if(!genLegal(curPos()).some(m=>m.det&&m.from===sq)){toast('Geht nicht – dein König stünde danach im Schach'); return;}
-      ui.sel=null; ui.targets=new Map(); ui.det=ui.det===sq?null:sq; renderGame(); return;
+      const was=ui.detFrom===sq&&ui.detTo===null;
+      ui.sel=null; ui.targets=new Map(); ui.detFrom=sq; ui.detTo=null;
+      if(game.settings.touchMove) ui.lock=sq;
+      drag={sq,x:e.clientX,y:e.clientY,moved:false,was,over:-1,det:true};
+      try{$('#grid').setPointerCapture(e.pointerId);}catch(err){}
+      renderGame(); return;
     }
-    if(ui.det!==null){ui.det=null; renderGame();}
+    if(ui.detFrom!==null){
+      if(sq!==ui.detFrom) setDetTarget(sq);
+      return;
+    }
     if(p&&colorOf(p)===myColor){
       if(ui.lock!==null&&ui.lock!==sq) return;
       const was=ui.sel===sq;
@@ -1546,7 +1575,21 @@ function onUp(e,cancel){
   if(!drag) return;
   const d=drag; drag=null;
   if(d.g) d.g.remove();
+  if(d.det){
+    if(d.moved){
+      const to=cancel?-1:sqAt($('#grid'),e.clientX,e.clientY,ui.flipped);
+      if(to>=0&&to!==d.sq&&ui.detFrom===d.sq) {setDetTarget(to); return;}
+      renderGame(); return;
+    }
+    if(d.was&&ui.lock===null){ui.detFrom=null; ui.detTo=null; renderGame();}
+    return;
+  }
   if(d.pre){
+    if(canPlay()){
+      const to=d.moved&&!cancel?sqAt($('#grid'),e.clientX,e.clientY,ui.flipped):-1;
+      if(ui.sel===d.sq&&ui.targets.has(to)){tryMove(to); return;}
+      renderGame(); return;
+    }
     if(d.moved){
       const to=cancel?-1:sqAt($('#grid'),e.clientX,e.clientY,ui.flipped);
       if(ui.preSel===d.sq&&ui.preTargets.has(to)){setPre(d.sq,to); return;}
@@ -1661,12 +1704,12 @@ async function act(a){
       if(!game||!game.settings.bomb||!curPos().bombs[myColor]) return;
       if(!canPlay()&&!ui.bombMode){toast(game.result?'Die Partie ist vorbei':'Du bist nicht am Zug'); return;}
       if(ui.lock!==null){toast('Berührt – geführt: du musst die angetippte Figur ziehen'); return;}
-      ui.bombMode=!ui.bombMode; ui.bombTarget=null; ui.det=null; ui.sel=null; ui.targets=new Map(); renderGame(); break;
+      ui.bombMode=!ui.bombMode; ui.bombTarget=null; ui.detFrom=null; ui.detTo=null; ui.sel=null; ui.targets=new Map(); renderGame(); break;
     case 'bombNo': ui.bombMode=false; ui.bombTarget=null; renderGame(); break;
-    case 'detNo': ui.det=null; renderGame(); break;
+    case 'detNo': ui.detTo=null; if(ui.lock===null) ui.detFrom=null; renderGame(); break;
     case 'detGo': {
-      const sq=ui.det; ui.det=null;
-      if(sq!==null&&canPlay()) commitMove('*'+sqName(sq)); else renderGame();
+      const f=ui.detFrom,t=ui.detTo; ui.detFrom=null; ui.detTo=null;
+      if(f!==null&&t!==null&&canPlay()) commitMove('*'+sqName(f)+sqName(t)); else renderGame();
       break;
     }
     case 'bombGo': {
